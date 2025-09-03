@@ -37,8 +37,8 @@ resource "google_compute_firewall" "allow_ssh" {
   network = google_compute_network.vpc.name
 
   allow {
-    protocol  = "tcp"
-    ports     = ["22"]
+    protocol = "tcp"
+    ports    = ["22"]
   }
 
   direction     = "INGRESS"
@@ -53,8 +53,8 @@ resource "google_compute_firewall" "allow_dev_to_shared" {
 
   allow { protocol = "all" }
   direction     = "INGRESS"
-  source_ranges = [var.subnet_a_cidr]   # DEV subnet
-  target_tags   = ["shared"]            # only VMs tagged shared
+  source_ranges = [var.subnet_a_cidr] # DEV subnet
+  target_tags   = ["shared"]          # only VMs tagged shared
 }
 
 # Allow SHARED -> DEV
@@ -64,8 +64,8 @@ resource "google_compute_firewall" "allow_shared_to_dev" {
 
   allow { protocol = "all" }
   direction     = "INGRESS"
-  source_ranges = [var.subnet_c_cidr]   # SHARED subnet
-  target_tags   = ["dev"]               # only VMs tagged dev
+  source_ranges = [var.subnet_c_cidr] # SHARED subnet
+  target_tags   = ["dev"]             # only VMs tagged dev
 }
 
 # Allow PROD -> SHARED
@@ -75,7 +75,7 @@ resource "google_compute_firewall" "allow_prod_to_shared" {
 
   allow { protocol = "all" }
   direction     = "INGRESS"
-  source_ranges = [var.subnet_b_cidr]   # PROD subnet
+  source_ranges = [var.subnet_b_cidr] # PROD subnet
   target_tags   = ["shared"]
 }
 
@@ -86,10 +86,42 @@ resource "google_compute_firewall" "allow_shared_to_prod" {
 
   allow { protocol = "all" }
   direction     = "INGRESS"
-  source_ranges = [var.subnet_c_cidr]   # SHARED subnet
+  source_ranges = [var.subnet_c_cidr] # SHARED subnet
   target_tags   = ["prod"]
 }
 
+# Allow SSH from your IP into bastion
+resource "google_compute_firewall" "allow_ssh_to_bastion" {
+  name    = "allow-ssh-to-bastion"
+  network = google_compute_network.vpc.name
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+
+  direction     = "INGRESS"
+  source_ranges = [var.my_ip_cidr]
+  target_tags   = ["bastion"]
+}
+
+# allow SSH from bastion (private IP) → dev/prod/shared
+resource "google_compute_firewall" "allow_ssh_from_bastion_internal" {
+  name    = "allow-ssh-from-bastion-internal"
+  network = google_compute_network.vpc.name
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+
+  direction = "INGRESS"
+  # Only the bastion's NIC IP can initiate SSH to others
+  source_ranges = ["${google_compute_instance.bastion.network_interface[0].network_ip}/32"]
+
+  # Let bastion reach all tiers (dev/prod/shared)
+  target_tags = ["dev", "prod", "shared"]
+}
 
 # -------------------------
 # (Optional) Cloud NAT via Cloud Router
@@ -129,9 +161,6 @@ resource "google_compute_instance" "vm_a" {
 
   network_interface {
     subnetwork = google_compute_subnetwork.subnet_a.name
-
-    # External IP for easy SSH during the lab
-    access_config {}
   }
 
   metadata_startup_script = <<-EOT
@@ -155,9 +184,6 @@ resource "google_compute_instance" "vm_b" {
 
   network_interface {
     subnetwork = google_compute_subnetwork.subnet_b.name
-
-    # External IP for easy SSH during the lab
-    access_config {}
   }
 
   metadata_startup_script = <<-EOT
@@ -181,7 +207,6 @@ resource "google_compute_instance" "vm_c" {
 
   network_interface {
     subnetwork = google_compute_subnetwork.subnet_c.name
-    access_config {}
   }
 
   metadata_startup_script = <<-EOT
@@ -189,5 +214,29 @@ resource "google_compute_instance" "vm_c" {
     apt-get update -y
     apt-get install -y traceroute net-tools
   EOT
+}
+
+resource "google_compute_instance" "bastion" {
+  name         = var.bastion_name
+  machine_type = var.machine_type
+  zone         = var.zone_bastion
+  tags         = ["bastio", "ssh"]
+
+  boot_disk {
+    initialize_params {
+      image = "debian-cloud/debian-11"
+    }
+  }
+
+  network_interface {
+    subnetwork = google_compute_subnetwork.subnet_c.name
+    access_config {}
+  }
+
+  metadata_startup_script = <<-EOT
+      #!/bin/bash
+      apt-get update -y
+      apt-get install -y traceroute net-tools
+    EOT
 }
 

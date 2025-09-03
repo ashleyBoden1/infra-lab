@@ -75,6 +75,19 @@ variable "machine_type" {
   default     = "e2-micro"
 }
 
+variable "bastion_name" {
+  description = "Bastion host name"
+  type        = string
+  default     = "vm-bastion"
+}
+
+variable "zone_bastion" {
+  description = "Zone for bastion"
+  type        = string
+  default     = "us-central1-c"
+}
+
+
 # For SSH lab convenience; replace with your public IP in CIDR
 # format, e.g., "203.0.113.45/32". For quick lab you can leave
 # as 0.0.0.0/0 but it's not secure for real use.
