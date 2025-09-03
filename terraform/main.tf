@@ -1,36 +1,93 @@
-# VPC Network
-resource "google_compute_network" "vpc_network" {
-  name = var.network_name
+# -------------------------
+# VPC + Subnets
+# -------------------------
+resource "google_compute_network" "vpc" {
+  name                    = var.network_name
+  auto_create_subnetworks = false
 }
 
-# Static external IP for the VM
-resource "google_compute_address" "vm_ip" {
-  name   = "${var.vm_name}-ip"
-  region = var.region
+resource "google_compute_subnetwork" "subnet_a" {
+  name          = "${var.network_name}-subnet-a"
+  ip_cidr_range = var.subnet_a_cidr
+  network       = google_compute_network.vpc.id
+  region        = var.region
 }
 
-# Firewall to allow SSH (22) and HTTP (80) for VMs tagged "web"
-resource "google_compute_firewall" "allow_ssh_http" {
-  name    = "allow-ssh-http"
-  network = google_compute_network.vpc_network.name
+resource "google_compute_subnetwork" "subnet_b" {
+  name          = "${var.network_name}-subnet-b"
+  ip_cidr_range = var.subnet_b_cidr
+  network       = google_compute_network.vpc.id
+  region        = var.region
+}
+
+# -------------------------
+# Firewall rules
+# -------------------------
+
+# Allow internal traffic (TCP/UDP/ICMP) within 10.10.0.0/16
+resource "google_compute_firewall" "allow_internal" {
+  name    = "allow-internal-10-10-0-0-16"
+  network = google_compute_network.vpc.name
 
   allow {
     protocol = "tcp"
-    ports    = ["22", "80"]
+  }
+
+  allow {
+    protocol = "udp"
+  }
+
+  allow {
+    protocol = "icmp"
+  }
+
+  source_ranges = ["10.10.0.0/16"]
+}
+
+# Allow SSH from your IP to either VM (safer than 0.0.0.0/0)
+resource "google_compute_firewall" "allow_ssh" {
+  name    = "allow-ssh-from-my-ip"
+  network = google_compute_network.vpc.name
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
   }
 
   direction     = "INGRESS"
-  source_ranges = ["0.0.0.0/0"]
-  target_tags   = ["web"]
+  source_ranges = [var.my_ip_cidr]
+  target_tags   = ["ssh"]
 }
 
-# VM
-resource "google_compute_instance" "vm_instance" {
-  name         = var.vm_name
-  machine_type = var.machine_type
-  zone         = var.zone
+# -------------------------
+# (Optional) Cloud NAT via Cloud Router
+# Lets VMs without external IPs reach internet. We'll still
+# give our VMs external IPs for easy SSH, but this prepares you
+# for private-only VMs later.
+# -------------------------
 
-  tags = ["web"]
+resource "google_compute_router" "router" {
+  name    = "${var.network_name}-router"
+  region  = var.region
+  network = google_compute_network.vpc.id
+}
+
+resource "google_compute_router_nat" "nat" {
+  name                               = "${var.network_name}-nat"
+  router                             = google_compute_router.router.name
+  region                             = var.region
+  nat_ip_allocate_option             = "AUTO_ONLY"
+  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+}
+
+# -------------------------
+# VMs (one per subnet)
+# -------------------------
+resource "google_compute_instance" "vm_a" {
+  name         = var.vm_a_name
+  machine_type = var.machine_type
+  zone         = var.zone_a
+  tags         = ["ssh"]
 
   boot_disk {
     initialize_params {
@@ -39,17 +96,41 @@ resource "google_compute_instance" "vm_instance" {
   }
 
   network_interface {
-    network = google_compute_network.vpc_network.name
-    access_config {
-      nat_ip = google_compute_address.vm_ip.address
-    }
+    subnetwork = google_compute_subnetwork.subnet_a.name
+
+    # External IP for easy SSH during the lab
+    access_config {}
   }
 
   metadata_startup_script = <<-EOT
     #!/bin/bash
     apt-get update -y
-    apt-get install -y nginx
-    systemctl enable nginx
-    systemctl start nginx
+    apt-get install -y traceroute
+  EOT
+}
+
+resource "google_compute_instance" "vm_b" {
+  name         = var.vm_b_name
+  machine_type = var.machine_type
+  zone         = var.zone_b
+  tags         = ["ssh"]
+
+  boot_disk {
+    initialize_params {
+      image = "debian-cloud/debian-11"
+    }
+  }
+
+  network_interface {
+    subnetwork = google_compute_subnetwork.subnet_b.name
+
+    # External IP for easy SSH during the lab
+    access_config {}
+  }
+
+  metadata_startup_script = <<-EOT
+    #!/bin/bash
+    apt-get update -y
+    apt-get install -y traceroute
   EOT
 }
