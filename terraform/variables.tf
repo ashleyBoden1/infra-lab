@@ -21,6 +21,12 @@ variable "zone_b" {
   default     = "us-central1-b"
 }
 
+variable "zone_c" {
+  description = "Zone for VM C"
+  type        = string
+  default     = "us-central1-c"
+}
+
 variable "network_name" {
   description = "VPC name"
   type        = string
@@ -39,6 +45,12 @@ variable "subnet_b_cidr" {
   default     = "10.10.2.0/24"
 }
 
+variable "subnet_c_cidr" {
+  description = "CIDR for subnet C (shared services)"
+  type        = string
+  default     = "10.10.3.0/24"
+}
+
 variable "vm_a_name" {
   description = "VM A name"
   type        = string
@@ -49,6 +61,12 @@ variable "vm_b_name" {
   description = "VM B name"
   type        = string
   default     = "vm-b"
+}
+
+variable "vm_c_name" {
+  description = "VM C name"
+  type        = string
+  default     = "vm-shared"
 }
 
 variable "machine_type" {

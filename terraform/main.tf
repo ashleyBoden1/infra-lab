@@ -20,44 +20,76 @@ resource "google_compute_subnetwork" "subnet_b" {
   region        = var.region
 }
 
+resource "google_compute_subnetwork" "subnet_c" {
+  name          = "${var.network_name}--subnet-c"
+  ip_cidr_range = var.subnet_c_cidr
+  network       = google_compute_network.vpc.id
+  region        = var.region
+}
+
 # -------------------------
 # Firewall rules
 # -------------------------
 
-# Allow internal traffic (TCP/UDP/ICMP) within 10.10.0.0/16
-resource "google_compute_firewall" "allow_internal" {
-  name    = "allow-internal-10-10-0-0-16"
-  network = google_compute_network.vpc.name
-
-  allow {
-    protocol = "tcp"
-  }
-
-  allow {
-    protocol = "udp"
-  }
-
-  allow {
-    protocol = "icmp"
-  }
-
-  source_ranges = ["10.10.0.0/16"]
-}
-
-# Allow SSH from your IP to either VM (safer than 0.0.0.0/0)
+# SSH from you IP to VMs tagged "ssh"
 resource "google_compute_firewall" "allow_ssh" {
   name    = "allow-ssh-from-my-ip"
   network = google_compute_network.vpc.name
 
   allow {
-    protocol = "tcp"
-    ports    = ["22"]
+    protocol  = "tcp"
+    ports     = ["22"]
   }
 
   direction     = "INGRESS"
   source_ranges = [var.my_ip_cidr]
   target_tags   = ["ssh"]
 }
+
+# Allow DEV -> SHARED
+resource "google_compute_firewall" "allow_dev_to_shared" {
+  name    = "allow-dev-to-shared"
+  network = google_compute_network.vpc.name
+
+  allow { protocol = "all" }
+  direction     = "INGRESS"
+  source_ranges = [var.subnet_a_cidr]   # DEV subnet
+  target_tags   = ["shared"]            # only VMs tagged shared
+}
+
+# Allow SHARED -> DEV
+resource "google_compute_firewall" "allow_shared_to_dev" {
+  name    = "allow-shared-to-dev"
+  network = google_compute_network.vpc.name
+
+  allow { protocol = "all" }
+  direction     = "INGRESS"
+  source_ranges = [var.subnet_c_cidr]   # SHARED subnet
+  target_tags   = ["dev"]               # only VMs tagged dev
+}
+
+# Allow PROD -> SHARED
+resource "google_compute_firewall" "allow_prod_to_shared" {
+  name    = "allow-prod-to-shared"
+  network = google_compute_network.vpc.name
+
+  allow { protocol = "all" }
+  direction     = "INGRESS"
+  source_ranges = [var.subnet_b_cidr]   # PROD subnet
+  target_tags   = ["shared"]
+}
+
+# Allow SHARED -> PROD
+resource "google_compute_firewall" "allow_shared_to_prod" {
+  name    = "allow-shared-to-prod"
+  network = google_compute_network.vpc.name
+
+  allow { protocol = "all" }
+  direction     = "INGRESS"
+  source_ranges = [var.subnet_c_cidr]   # SHARED subnet
+  target_tags   = ["prod"]
+}
+
 
 # -------------------------
 # (Optional) Cloud NAT via Cloud Router
@@ -87,7 +119,7 @@ resource "google_compute_instance" "vm_a" {
   name         = var.vm_a_name
   machine_type = var.machine_type
   zone         = var.zone_a
-  tags         = ["ssh"]
+  tags         = ["dev", "ssh"]
 
   boot_disk {
     initialize_params {
@@ -113,7 +145,7 @@ resource "google_compute_instance" "vm_b" {
   name         = var.vm_b_name
   machine_type = var.machine_type
   zone         = var.zone_b
-  tags         = ["ssh"]
+  tags         = ["prod", "ssh"]
 
   boot_disk {
     initialize_params {
@@ -134,3 +166,28 @@ resource "google_compute_instance" "vm_b" {
     apt-get install -y traceroute
   EOT
 }
+
+resource "google_compute_instance" "vm_c" {
+  name         = var.vm_c_name
+  machine_type = var.machine_type
+  zone         = var.zone_c
+  tags         = ["shared", "ssh"]
+
+  boot_disk {
+    initialize_params {
+      image = "debian-cloud/debian-11"
+    }
+  }
+
+  network_interface {
+    subnetwork = google_compute_subnetwork.subnet_c.name
+    access_config {}
+  }
+
+  metadata_startup_script = <<-EOT
+    #!/bin/bash
+    apt-get update -y
+    apt-get install -y traceroute net-tools
+  EOT
+}
+
