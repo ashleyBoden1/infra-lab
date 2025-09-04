@@ -123,6 +123,21 @@ resource "google_compute_firewall" "allow_ssh_from_bastion_internal" {
   target_tags = ["dev", "prod", "shared"]
 }
 
+# Allow LB health check
+resource "google_compute_firewall" "allow_lb_healthcheck" {
+  name    = "allow-lb-healthcheck"
+  network = google_compute_network.vpc.name
+
+  allow {
+    protocol = "tcp"
+    ports    = ["80"]
+  }
+
+  direction     = "INGRESS"
+  source_ranges = ["130.211.0.0/22", "35.191.0.0/16"] # GCP LB health check ranges
+  target_tags   = ["lb-backend"]
+}
+
 # -------------------------
 # (Optional) Cloud NAT via Cloud Router
 # Lets VMs without external IPs reach internet. We'll still
@@ -240,3 +255,124 @@ resource "google_compute_instance" "bastion" {
     EOT
 }
 
+# -------------------------
+# Load balancer VMs
+# -------------------------
+
+resource "google_compute_instance" "lb_vm1" {
+  name         = var.lb_vm1_name
+  machine_type = var.machine_type
+  zone         = var.zone_a
+  tags         = ["lb-backend"]
+
+  boot_disk {
+    initialize_params {
+      image = "debian-cloud/debian-11"
+    }
+  }
+
+  network_interface {
+    subnetwork  = google_compute_subnetwork.subnet_a.name
+    access_config{}
+  }
+
+  metadata_startup_script = <<-EOT
+    #!/bin/bash
+    apt-get update -y
+    apt-get install -y nginx
+    echo "Hello from VM1 in zone ${var.zone_a}" > /var/www/html/index.html
+    systemctl restart nginx
+  EOT
+}
+
+resource "google_compute_instance" "lb_vm2" {
+  name         = var.lb_vm2_name
+  machine_type = var.machine_type
+  zone         = var.zone_b
+  tags         = ["lb-backend"]
+
+  boot_disk {
+    initialize_params {
+      image = "debian-cloud/debian-11"
+    }
+  }
+
+  network_interface {
+    subnetwork = google_compute_subnetwork.subnet_b.name
+    access_config {}
+  }
+
+  metadata_startup_script = <<-EOT
+    #!/bin/bash
+    apt-get update -y
+    apt-get install -y nginx
+    echo "Hello from VM2 in zone ${var.zone_b}" > /var/www/html/index.html
+    systemctl restart nginx
+  EOT
+}
+
+# -------------------------
+# Load balancer resources
+# -------------------------
+# Instance group managers for LB (wraps the VMs into groups)
+resource "google_compute_instance_group" "lb_vm1_group" {
+  name      = "${var.lb_vm1_name}-group"
+  zone      = var.zone_a
+  instances = [google_compute_instance.lb_vm1.self_link]
+  network   = google_compute_network.vpc.id
+}
+
+resource "google_compute_instance_group" "lb_vm2_group" {
+  name      = "${var.lb_vm2_name}-group"
+  zone      = var.zone_b
+  instances = [google_compute_instance.lb_vm2.self_link]
+  network   = google_compute_network.vpc.id
+}
+
+# Backend service
+resource "google_compute_backend_service" "default" {
+  name                  = "web-backend-service"
+  protocol              = "HTTP"
+  port_name             = "http"
+  load_balancing_scheme = "EXTERNAL"
+  timeout_sec           = 10
+  health_checks         = [google_compute_http_health_check.default.self_link]
+
+  backend {
+    group = google_compute_instance_group.lb_vm1_group.self_link
+  }
+
+  backend {
+    group = google_compute_instance_group.lb_vm2_group.self_link
+  }
+}
+
+# Health check
+resource "google_compute_http_health_check" "default" {
+  name               = "basic-http-health-check"
+  request_path       = "/"
+  port               = 80
+  check_interval_sec = 5
+  timeout_sec        = 5
+}
+
+# URL map
+resource "google_compute_url_map" "default" {
+  name            = "web-map"
+  default_service = google_compute_backend_service.default.self_link
+}
+
+# Target HTTP proxy
+resource "google_compute_target_http_proxy" "default" {
+  name    = "http-lb-proxy"
+  url_map = google_compute_url_map.default.self_link
+}
+
+# Global forwarding rule
+resource "google_compute_global_forwarding_rule" "default" {
+  name                  = "http-forwarding-rule"
+  target                = google_compute_target_http_proxy.default.self_link
+  port_range            = "80"
+  load_balancing_scheme = "EXTERNAL"
+  ip_protocol           = "TCP"
+}

@@ -27,3 +27,8 @@ output "ssh_to_bastion_hint" {
   value       = "gcloud compute ssh ${var.bastion_name} --zone=${var.zone_bastion}"
   description = "Convenient gcloud SSH command"
 }
+
+output "load_balancer_ip" {
+  value       = "google_compute_global_forwarding_rule.default.ip_address"
+  description = "Global IP of the HTTP load balancer"
+}

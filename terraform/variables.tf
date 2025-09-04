@@ -87,6 +87,16 @@ variable "zone_bastion" {
   default     = "us-central1-c"
 }
 
+variable "lb_vm1_name" {
+  default     = "lb-vm1"
+  description = "First VM behind load balancer"
+}
+
+variable "lb_vm2_name" {
+  default     = "lb-vm2"
+  description = "Second VM behind load balancer"
+}
+
 
 # For SSH lab convenience; replace with your public IP in CIDR
 # format, e.g., "203.0.113.45/32". For quick lab you can leave
